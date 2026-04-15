@@ -246,6 +246,19 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                 </div>
             </div>
 
+            <!-- 月份統計 -->
+            <div class="card mb-4" id="monthlyStatsCard" style="display:none;">
+                <div class="card-header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                    <h5 class="mb-0">每月消費統計</h5>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-hover mb-0">
+                        <thead><tr><th>月份</th><th>訂單數</th><th>總金額</th><th>平均金額</th></tr></thead>
+                        <tbody id="monthlyTable"></tbody>
+                    </table>
+                </div>
+            </div>
+
             <!-- 分頁 -->
             <ul class="nav nav-tabs mb-4" role="tablist">
                 <li class="nav-item">
@@ -491,6 +504,30 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                 document.getElementById('totalOrders').textContent = stats.total_orders;
                 document.getElementById('totalAmount').textContent = '$' + Math.round(stats.total_amount);
                 document.getElementById('avgAmount').textContent = '$' + Math.round(stats.avg_amount);
+                var card = document.getElementById('monthlyStatsCard');
+                var tbody = document.getElementById('monthlyTable');
+                tbody.innerHTML = '';
+                if (stats.monthly && stats.monthly.length > 0) {
+                    card.style.display = 'block';
+                    stats.monthly.forEach(function(m) {
+                        var row = document.createElement('tr');
+                        var td1 = document.createElement('td');
+                        td1.innerHTML = '<strong>' + m.month + '</strong>';
+                        var td2 = document.createElement('td');
+                        td2.textContent = m.orders;
+                        var td3 = document.createElement('td');
+                        td3.innerHTML = '<span class="badge bg-success">$' + Math.round(m.total) + '</span>';
+                        var td4 = document.createElement('td');
+                        td4.innerHTML = '<span class="badge bg-info">$' + Math.round(m.avg) + '</span>';
+                        row.appendChild(td1);
+                        row.appendChild(td2);
+                        row.appendChild(td3);
+                        row.appendChild(td4);
+                        tbody.appendChild(row);
+                    });
+                } else {
+                    card.style.display = 'none';
+                }
             } catch (error) {
                 console.error('載入統計失敗:', error);
             }
@@ -779,11 +816,21 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
             cursor = conn.cursor()
             cursor.execute('SELECT COUNT(*), SUM(amount), AVG(amount) FROM orders')
             total_orders, total_amount, avg_amount = cursor.fetchone()
+            cursor.execute("SELECT strftime('%Y-%m', order_date) as month, COUNT(*), SUM(amount), AVG(amount) FROM orders GROUP BY month ORDER BY month DESC")
+            monthly = []
+            for row in cursor.fetchall():
+                monthly.append({
+                    'month': row[0],
+                    'orders': row[1],
+                    'total': float(row[2]) if row[2] else 0,
+                    'avg': float(row[3]) if row[3] else 0,
+                })
             conn.close()
             stats = {
                 'total_orders': total_orders or 0,
                 'total_amount': float(total_amount) if total_amount else 0,
                 'avg_amount': float(avg_amount) if avg_amount else 0,
+                'monthly': monthly,
             }
             response = json.dumps(stats, ensure_ascii=False)
             self.send_json_response(response)
