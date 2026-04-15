@@ -12,7 +12,7 @@ import webbrowser
 import threading
 import time
 
-PORT = 8000
+PORT = int(os.environ.get('PORT', 8000))
 DB_FILE = 'ubereats_orders.db'
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -692,9 +692,10 @@ def main():
         with socketserver.TCPServer(("", PORT), UberEatsHandler) as httpd:
             print("伺服器已啟動：http://localhost:{}".format(PORT))
             print("按 Ctrl+C 停止伺服器")
-            browser_thread = threading.Thread(target=open_browser)
-            browser_thread.daemon = True
-            browser_thread.start()
+            if not os.environ.get('RAILWAY_ENVIRONMENT'):
+                browser_thread = threading.Thread(target=open_browser)
+                browser_thread.daemon = True
+                browser_thread.start()
             httpd.serve_forever()
     except KeyboardInterrupt:
         print("\n伺服器已停止")
