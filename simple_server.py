@@ -325,6 +325,8 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
             });
         }
 
+        var localUploads = [];
+
         async function uploadFiles(files) {
             var progress = document.getElementById('uploadProgress');
             var bar = document.getElementById('progressBar');
@@ -336,52 +338,85 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
 
             for (var i = 0; i < files.length; i++) {
                 var file = files[i];
-                text.textContent = '上傳中 (' + (i+1) + '/' + total + '): ' + file.name;
+                text.textContent = '處理中 (' + (i+1) + '/' + total + '): ' + file.name;
                 bar.style.width = ((i / total) * 100) + '%';
 
-                var formData = new FormData();
-                formData.append('file', file);
+                // 用 FileReader 在瀏覽器端讀取圖片
+                var dataUrl = await new Promise(function(resolve) {
+                    var reader = new FileReader();
+                    reader.onload = function(e) { resolve(e.target.result); };
+                    reader.readAsDataURL(file);
+                });
 
+                localUploads.push({
+                    name: file.name,
+                    size: file.size > 1024*1024 ? (file.size/1024/1024).toFixed(1)+' MB' : Math.round(file.size/1024)+' KB',
+                    dataUrl: dataUrl
+                });
+
+                // 也嘗試上傳到伺服器（如果失敗也沒關係）
                 try {
-                    var response = await fetch('/api/upload', { method: 'POST', body: formData });
-                    var result = await response.json();
-                    if (result.success) done++;
-                } catch (err) {
-                    console.error('Upload failed:', err);
-                }
+                    var formData = new FormData();
+                    formData.append('file', file);
+                    await fetch('/api/upload', { method: 'POST', body: formData });
+                } catch (err) {}
+
+                done++;
             }
 
             bar.style.width = '100%';
-            text.textContent = '完成！已上傳 ' + done + ' 張截圖';
+            text.textContent = '完成！已處理 ' + done + ' 張截圖';
             setTimeout(function() { progress.style.display = 'none'; }, 2000);
 
             document.getElementById('fileInput').value = '';
-            loadUploads();
+            renderUploads();
+        }
+
+        function renderUploads() {
+            var grid = document.getElementById('previewGrid');
+            grid.innerHTML = '';
+            document.getElementById('uploadCount').textContent = localUploads.length;
+
+            localUploads.forEach(function(file, idx) {
+                var div = document.createElement('div');
+                div.className = 'preview-item';
+                var img = document.createElement('img');
+                img.src = file.dataUrl;
+                img.alt = 'screenshot';
+                div.appendChild(img);
+                var btn = document.createElement('button');
+                btn.className = 'delete-btn';
+                btn.textContent = 'X';
+                btn.onclick = function() { localUploads.splice(idx, 1); renderUploads(); };
+                div.appendChild(btn);
+                var info = document.createElement('div');
+                info.className = 'info';
+                info.innerHTML = '<div>' + file.name + '</div><div style="color:#999">' + file.size + '</div>';
+                div.appendChild(info);
+                grid.appendChild(div);
+            });
         }
 
         async function loadUploads() {
+            // 顯示本地預覽
+            renderUploads();
+            // 也嘗試載入伺服器端的（如果有的話）
             try {
                 var response = await fetch('/api/uploads');
                 var uploads = await response.json();
-                var grid = document.getElementById('previewGrid');
-                grid.innerHTML = '';
-                document.getElementById('uploadCount').textContent = uploads.length;
-
-                uploads.forEach(function(file) {
-                    var div = document.createElement('div');
-                    div.className = 'preview-item';
-                    div.innerHTML =
-                        '<img src="/uploads/' + file.name + '" alt="screenshot">' +
-                        '<button class="delete-btn" onclick="deleteUpload(\'' + file.name + '\')" title="刪除">X</button>' +
-                        '<div class="info">' +
-                        '<div>' + file.name + '</div>' +
-                        '<div style="color:#999">' + file.size + '</div>' +
-                        '</div>';
-                    grid.appendChild(div);
-                });
-            } catch (err) {
-                console.error('Load uploads failed:', err);
-            }
+                if (uploads.length > 0 && localUploads.length === 0) {
+                    document.getElementById('uploadCount').textContent = uploads.length;
+                    var grid = document.getElementById('previewGrid');
+                    uploads.forEach(function(file) {
+                        var div = document.createElement('div');
+                        div.className = 'preview-item';
+                        div.innerHTML =
+                            '<img src="/uploads/' + file.name + '" alt="screenshot">' +
+                            '<div class="info"><div>' + file.name + '</div><div style="color:#999">' + file.size + '</div></div>';
+                        grid.appendChild(div);
+                    });
+                }
+            } catch (err) {}
         }
 
         async function deleteUpload(filename) {
