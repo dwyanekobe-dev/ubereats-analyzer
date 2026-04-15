@@ -212,12 +212,12 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                             <h3 class="mb-0">上傳 UberEats 訂單截圖</h3>
                         </div>
                         <div class="card-body">
-                            <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+                            <label for="fileInput" class="upload-zone" id="uploadZone" style="display:block;">
                                 <h4>點擊上傳截圖</h4>
                                 <p>支援 JPG、PNG 格式，可一次上傳多張</p>
                                 <p style="margin-top: 10px; color: #667eea;">從手機 Uber Eats App 的訂單頁面截圖即可</p>
-                            </div>
-                            <input type="file" id="fileInput" accept="image/*" multiple style="position:absolute;left:-9999px;">
+                                <input type="file" id="fileInput" accept="image/*" multiple style="opacity:0;width:0;height:0;overflow:hidden;position:absolute;">
+                            </label>
                             <label for="fileInput" class="btn btn-primary btn-lg w-100 mt-3" style="border-radius:15px;">選擇相片上傳</label>
 
                             <div class="upload-progress" id="uploadProgress">
