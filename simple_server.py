@@ -35,6 +35,10 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path == '/api/orders':
             self.add_order()
+        elif self.path == '/api/orders/update':
+            self.update_order()
+        elif self.path == '/api/orders/delete':
+            self.delete_order()
         elif self.path == '/api/upload':
             self.handle_upload()
         elif self.path == '/api/delete-upload':
@@ -279,6 +283,7 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                                             <th>日期</th>
                                             <th>金額</th>
                                             <th>餐點</th>
+                                            <th style="width:120px">操作</th>
                                         </tr>
                                     </thead>
                                     <tbody id="ordersTable"></tbody>
@@ -287,6 +292,41 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                         </div>
                     </div>
                 </div>
+
+            <!-- 編輯 Modal -->
+            <div class="modal fade" id="editModal" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header" style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;">
+                            <h5 class="modal-title">編輯訂單</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <input type="hidden" id="editId">
+                            <div class="mb-3">
+                                <label class="form-label">餐廳名稱</label>
+                                <input type="text" class="form-control" id="editRestaurant" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">訂單日期</label>
+                                <input type="date" class="form-control" id="editDate" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">金額 (NT$)</label>
+                                <input type="number" class="form-control" id="editAmount" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">餐點項目</label>
+                                <input type="text" class="form-control" id="editItems" required>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                            <button type="button" class="btn btn-primary" onclick="saveEdit()">儲存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
             </div>
         </div>
     </div>
@@ -448,14 +488,19 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(formData)
                 });
-                if (response.ok) {
+                var result = await response.json();
+                if (result.duplicate) {
+                    alert('此訂單已存在（同餐廳、同日期、同金額），不會重複新增');
+                    return;
+                }
+                if (result.success) {
                     document.getElementById('orderForm').reset();
                     document.getElementById('orderDate').value = new Date().toISOString().split('T')[0];
                     loadStats();
                     loadOrders();
                     alert('訂單新增成功！');
                 } else {
-                    alert('新增失敗，請重試');
+                    alert('新增失敗：' + (result.error || '請重試'));
                 }
             } catch (error) {
                 alert('新增失敗：' + error.message);
@@ -486,11 +531,71 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                         '<td><strong>' + order.restaurant_name + '</strong></td>' +
                         '<td>' + new Date(order.order_date).toLocaleDateString('zh-TW') + '</td>' +
                         '<td><span class="badge bg-success">$' + order.amount + '</span></td>' +
-                        '<td>' + order.items + '</td>';
+                        '<td>' + order.items + '</td>' +
+                        '<td>' +
+                            '<button class="btn btn-sm btn-outline-primary me-1" onclick="openEdit(' + order.id + ',\'' + order.restaurant_name.replace(/'/g, "\\\\'") + '\',\'' + order.order_date + '\',' + order.amount + ',\'' + order.items.replace(/'/g, "\\\\'") + '\')">編輯</button>' +
+                            '<button class="btn btn-sm btn-outline-danger" onclick="deleteOrder(' + order.id + ')">刪除</button>' +
+                        '</td>';
                     tableBody.appendChild(row);
                 });
             } catch (error) {
                 console.error('載入訂單失敗:', error);
+            }
+        }
+
+        function openEdit(id, name, date, amount, items) {
+            document.getElementById('editId').value = id;
+            document.getElementById('editRestaurant').value = name;
+            document.getElementById('editDate').value = date;
+            document.getElementById('editAmount').value = amount;
+            document.getElementById('editItems').value = items;
+            new bootstrap.Modal(document.getElementById('editModal')).show();
+        }
+
+        async function saveEdit() {
+            var data = {
+                id: document.getElementById('editId').value,
+                restaurant_name: document.getElementById('editRestaurant').value,
+                order_date: document.getElementById('editDate').value,
+                amount: parseInt(document.getElementById('editAmount').value),
+                items: document.getElementById('editItems').value
+            };
+            try {
+                var response = await fetch('/api/orders/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                var result = await response.json();
+                if (result.success) {
+                    bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
+                    loadStats();
+                    loadOrders();
+                } else {
+                    alert('更新失敗：' + (result.error || ''));
+                }
+            } catch (error) {
+                alert('更新失敗：' + error.message);
+            }
+        }
+
+        async function deleteOrder(id) {
+            if (!confirm('確定要刪除這筆訂單嗎？')) return;
+            try {
+                var response = await fetch('/api/orders/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: id })
+                });
+                var result = await response.json();
+                if (result.success) {
+                    loadStats();
+                    loadOrders();
+                } else {
+                    alert('刪除失敗：' + (result.error || ''));
+                }
+            } catch (error) {
+                alert('刪除失敗：' + error.message);
             }
         }
     </script>
@@ -668,12 +773,53 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(post_data)
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
+            # 重複檢查：同餐廳 + 同日期 + 同金額 視為重複
+            cursor.execute('SELECT id FROM orders WHERE restaurant_name=? AND order_date=? AND amount=?',
+                           (data['restaurant_name'], data['order_date'], int(data['amount'])))
+            existing = cursor.fetchone()
+            if existing:
+                conn.close()
+                response = json.dumps({'success': False, 'duplicate': True,
+                    'error': '此訂單已存在（同餐廳、同日期、同金額）'}, ensure_ascii=False)
+                self.send_json_response(response)
+                return
             cursor.execute('INSERT INTO orders (restaurant_name, order_date, amount, items) VALUES (?, ?, ?, ?)',
                            (data['restaurant_name'], data['order_date'], int(data['amount']), data['items']))
             conn.commit()
             order_id = cursor.lastrowid
             conn.close()
             response = json.dumps({'success': True, 'id': order_id}, ensure_ascii=False)
+            self.send_json_response(response)
+        except Exception as e:
+            self.send_error_response(str(e))
+
+    def update_order(self):
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length).decode('utf-8')
+            data = json.loads(post_data)
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute('UPDATE orders SET restaurant_name=?, order_date=?, amount=?, items=? WHERE id=?',
+                           (data['restaurant_name'], data['order_date'], int(data['amount']), data['items'], int(data['id'])))
+            conn.commit()
+            conn.close()
+            response = json.dumps({'success': True}, ensure_ascii=False)
+            self.send_json_response(response)
+        except Exception as e:
+            self.send_error_response(str(e))
+
+    def delete_order(self):
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length).decode('utf-8')
+            data = json.loads(post_data)
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM orders WHERE id=?', (int(data['id']),))
+            conn.commit()
+            conn.close()
+            response = json.dumps({'success': True}, ensure_ascii=False)
             self.send_json_response(response)
         except Exception as e:
             self.send_error_response(str(e))
@@ -710,20 +856,23 @@ def init_database():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    cursor.execute('SELECT COUNT(*) FROM orders')
-    count = cursor.fetchone()[0]
-    if count == 0:
-        orders = [
-            ('臭名昭彰祖傳酥炸臭豆腐', '2026-04-06', 130, '臭豆腐'),
-            ('串本町串燒（原火奴總店）', '2026-03-22', 417, '8份餐點'),
-            ('阿俊龍飽', '2026-03-14', 130, '蝦仁炒飯'),
-            ('肉蛋吐司創始店 肉蛋中西式早餐店', '2026-03-14', 170, '招牌肉蛋土司、招牌冰奶茶'),
-            ('范姜雞肉飯 后里甲后店', '2026-03-09', 166, 'Braised Chicken Rice、Pork Meatballs Soup、Braised Tofu'),
-            ('鍋裡GOiN風味湯鍋 台中后里店', '2026-02-26', 226, '火鍋美食鍋'),
-            ('一頂燒堡臭豆腐 后里店', '2026-02-11', 140, '酥炸臭豆腐'),
-        ]
-        cursor.executemany('INSERT INTO orders (restaurant_name, order_date, amount, items) VALUES (?, ?, ?, ?)', orders)
-        print('已載入 7 筆 UberEats 訂單')
+    orders = [
+        ('臭名昭彰祖傳酥炸臭豆腐', '2026-04-06', 130, '臭豆腐'),
+        ('串本町串燒（原火奴總店）', '2026-03-22', 417, '8份餐點'),
+        ('阿俊龍飽', '2026-03-14', 130, '蝦仁炒飯'),
+        ('肉蛋吐司創始店 肉蛋中西式早餐店', '2026-03-14', 170, '招牌肉蛋土司、招牌冰奶茶'),
+        ('范姜雞肉飯 后里甲后店', '2026-03-09', 166, 'Braised Chicken Rice、Pork Meatballs Soup、Braised Tofu'),
+        ('鍋裡GOiN風味湯鍋 台中后里店', '2026-02-26', 226, '火鍋美食鍋'),
+        ('一頂燒堡臭豆腐 后里店', '2026-02-11', 140, '酥炸臭豆腐'),
+    ]
+    added = 0
+    for o in orders:
+        cursor.execute('SELECT id FROM orders WHERE restaurant_name=? AND order_date=? AND amount=?', (o[0], o[1], o[2]))
+        if not cursor.fetchone():
+            cursor.execute('INSERT INTO orders (restaurant_name, order_date, amount, items) VALUES (?, ?, ?, ?)', o)
+            added += 1
+    if added > 0:
+        print('已載入 {} 筆 UberEats 訂單（跳過重複）'.format(added))
     conn.commit()
     conn.close()
 
