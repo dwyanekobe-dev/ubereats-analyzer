@@ -22,12 +22,12 @@ ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def recognize_orders(image_data, media_type='image/jpeg'):
-    """用 Claude Vision API 辨識 UberEats 截圖中的訂單"""
+    """用 Claude Vision API 辨識 UberEats 截圖中的訂單，回傳 (orders, error_msg)"""
     if not ANTHROPIC_API_KEY:
-        print('ANTHROPIC_API_KEY not set, skipping OCR')
-        return []
+        return [], 'ANTHROPIC_API_KEY 未設定'
 
     img_b64 = base64.b64encode(image_data).decode('utf-8')
+    print('圖片大小: {} bytes, base64: {} chars'.format(len(image_data), len(img_b64)), flush=True)
 
     request_body = json.dumps({
         "model": "claude-sonnet-4-20250514",
@@ -62,20 +62,25 @@ def recognize_orders(image_data, media_type='image/jpeg'):
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        print('呼叫 Claude Vision API...', flush=True)
+        with urllib.request.urlopen(req, timeout=60) as resp:
             result = json.loads(resp.read().decode('utf-8'))
             text = result['content'][0]['text'].strip()
-            # 找到 JSON 陣列部分
+            print('Claude 回應: {}'.format(text[:200]), flush=True)
             start = text.find('[')
             end = text.rfind(']') + 1
             if start >= 0 and end > start:
                 orders = json.loads(text[start:end])
-                print('Claude 辨識到 {} 筆訂單'.format(len(orders)))
-                return orders
-            return []
+                print('辨識到 {} 筆訂單'.format(len(orders)), flush=True)
+                return orders, None
+            return [], '回應中沒有 JSON 資料'
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        print('API HTTP Error {}: {}'.format(e.code, body[:300]), flush=True)
+        return [], 'API 錯誤 {}: {}'.format(e.code, body[:100])
     except Exception as e:
-        print('Claude Vision API error: {}'.format(e))
-        return []
+        print('API Error: {}'.format(e), flush=True)
+        return [], 'API 呼叫失敗: {}'.format(str(e))
 
 
 class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
@@ -658,12 +663,13 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
             # 用 Claude Vision 辨識截圖內容
-            orders_found = recognize_orders(file_data, media_type)
+            orders_found, err_msg = recognize_orders(file_data, media_type)
 
             if not orders_found:
+                msg = err_msg if err_msg else '未偵測到訂單資料，請確認是 UberEats 訂單截圖'
                 response = json.dumps({
                     'success': True, 'orders': [],
-                    'message': '未偵測到訂單資料，請確認是 UberEats 訂單截圖'
+                    'message': msg
                 }, ensure_ascii=False)
                 self.send_json_response(response)
                 return
