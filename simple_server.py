@@ -30,7 +30,7 @@ def recognize_orders(image_data, media_type='image/jpeg'):
     print('圖片大小: {} bytes, base64: {} chars'.format(len(image_data), len(img_b64)), flush=True)
 
     request_body = json.dumps({
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-3-5-sonnet-20241022",
         "max_tokens": 2048,
         "messages": [{
             "role": "user",
