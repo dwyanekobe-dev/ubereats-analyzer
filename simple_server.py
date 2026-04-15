@@ -502,23 +502,42 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
             }
         }
 
+        var allOrders = [];
+
         async function loadOrders() {
             try {
                 var response = await fetch('/api/orders');
-                var orders = await response.json();
+                allOrders = await response.json();
                 var tableBody = document.getElementById('ordersTable');
                 tableBody.innerHTML = '';
-                orders.forEach(function(order) {
+                allOrders.forEach(function(order, idx) {
                     var row = document.createElement('tr');
-                    row.innerHTML =
-                        '<td><strong>' + order.restaurant_name + '</strong></td>' +
-                        '<td>' + new Date(order.order_date).toLocaleDateString('zh-TW') + '</td>' +
-                        '<td><span class="badge bg-success">$' + order.amount + '</span></td>' +
-                        '<td>' + order.items + '</td>' +
-                        '<td>' +
-                            '<button class="btn btn-sm btn-outline-primary me-1" onclick="openEdit(' + order.id + ',\'' + order.restaurant_name.replace(/'/g, "\\\\'") + '\',\'' + order.order_date + '\',' + order.amount + ',\'' + order.items.replace(/'/g, "\\\\'") + '\')">編輯</button>' +
-                            '<button class="btn btn-sm btn-outline-danger" onclick="deleteOrder(' + order.id + ')">刪除</button>' +
-                        '</td>';
+                    var td1 = document.createElement('td');
+                    td1.innerHTML = '<strong>' + order.restaurant_name + '</strong>';
+                    var td2 = document.createElement('td');
+                    td2.textContent = new Date(order.order_date).toLocaleDateString('zh-TW');
+                    var td3 = document.createElement('td');
+                    td3.innerHTML = '<span class="badge bg-success">$' + order.amount + '</span>';
+                    var td4 = document.createElement('td');
+                    td4.textContent = order.items;
+                    var td5 = document.createElement('td');
+                    var editBtn = document.createElement('button');
+                    editBtn.className = 'btn btn-sm btn-outline-primary me-1';
+                    editBtn.textContent = '編輯';
+                    editBtn.setAttribute('data-idx', idx);
+                    editBtn.onclick = function() { openEdit(parseInt(this.getAttribute('data-idx'))); };
+                    var delBtn = document.createElement('button');
+                    delBtn.className = 'btn btn-sm btn-outline-danger';
+                    delBtn.textContent = '刪除';
+                    delBtn.setAttribute('data-id', order.id);
+                    delBtn.onclick = function() { deleteOrder(parseInt(this.getAttribute('data-id'))); };
+                    td5.appendChild(editBtn);
+                    td5.appendChild(delBtn);
+                    row.appendChild(td1);
+                    row.appendChild(td2);
+                    row.appendChild(td3);
+                    row.appendChild(td4);
+                    row.appendChild(td5);
                     tableBody.appendChild(row);
                 });
             } catch (error) {
@@ -526,12 +545,13 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
             }
         }
 
-        function openEdit(id, name, date, amount, items) {
-            document.getElementById('editId').value = id;
-            document.getElementById('editRestaurant').value = name;
-            document.getElementById('editDate').value = date;
-            document.getElementById('editAmount').value = amount;
-            document.getElementById('editItems').value = items;
+        function openEdit(idx) {
+            var order = allOrders[idx];
+            document.getElementById('editId').value = order.id;
+            document.getElementById('editRestaurant').value = order.restaurant_name;
+            document.getElementById('editDate').value = order.order_date;
+            document.getElementById('editAmount').value = order.amount;
+            document.getElementById('editItems').value = order.items;
             new bootstrap.Modal(document.getElementById('editModal')).show();
         }
 
