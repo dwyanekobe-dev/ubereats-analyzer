@@ -710,6 +710,20 @@ def init_database():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    cursor.execute('SELECT COUNT(*) FROM orders')
+    count = cursor.fetchone()[0]
+    if count == 0:
+        orders = [
+            ('臭名昭彰祖傳酥炸臭豆腐', '2026-04-06', 130, '臭豆腐'),
+            ('串本町串燒（原火奴總店）', '2026-03-22', 417, '8份餐點'),
+            ('阿俊龍飽', '2026-03-14', 130, '蝦仁炒飯'),
+            ('肉蛋吐司創始店 肉蛋中西式早餐店', '2026-03-14', 170, '招牌肉蛋土司、招牌冰奶茶'),
+            ('范姜雞肉飯 后里甲后店', '2026-03-09', 166, 'Braised Chicken Rice、Pork Meatballs Soup、Braised Tofu'),
+            ('鍋裡GOiN風味湯鍋 台中后里店', '2026-02-26', 226, '火鍋美食鍋'),
+            ('一頂燒堡臭豆腐 后里店', '2026-02-11', 140, '酥炸臭豆腐'),
+        ]
+        cursor.executemany('INSERT INTO orders (restaurant_name, order_date, amount, items) VALUES (?, ?, ?, ?)', orders)
+        print('已載入 7 筆 UberEats 訂單')
     conn.commit()
     conn.close()
 
