@@ -7,6 +7,9 @@ import sqlite3
 import json
 import os
 import uuid
+import base64
+import urllib.request
+import urllib.error
 from datetime import datetime
 import webbrowser
 import threading
@@ -15,7 +18,65 @@ import time
 PORT = int(os.environ.get('PORT', 8000))
 DB_FILE = 'ubereats_orders.db'
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+def recognize_orders(image_data, media_type='image/jpeg'):
+    """用 Claude Vision API 辨識 UberEats 截圖中的訂單"""
+    if not ANTHROPIC_API_KEY:
+        print('ANTHROPIC_API_KEY not set, skipping OCR')
+        return []
+
+    img_b64 = base64.b64encode(image_data).decode('utf-8')
+
+    request_body = json.dumps({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 2048,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": img_b64
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": '這是 UberEats 訂單截圖，請辨識所有訂單，回傳 JSON 陣列。每筆訂單格式：{"restaurant_name":"店名","order_date":"YYYY-MM-DD","amount":金額數字,"items":"餐點描述"}。只回傳 JSON 陣列，不要其他文字。如果看不到訂單就回傳 []。日期如果只顯示月日，年份請用 2026。金額只取數字（不含$符號）。'
+                }
+            ]
+        }]
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        'https://api.anthropic.com/v1/messages',
+        data=request_body,
+        headers={
+            'Content-Type': 'application/json',
+            'x-api-key': ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01'
+        }
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode('utf-8'))
+            text = result['content'][0]['text'].strip()
+            # 找到 JSON 陣列部分
+            start = text.find('[')
+            end = text.rfind(']') + 1
+            if start >= 0 and end > start:
+                orders = json.loads(text[start:end])
+                print('Claude 辨識到 {} 筆訂單'.format(len(orders)))
+                return orders
+            return []
+    except Exception as e:
+        print('Claude Vision API error: {}'.format(e))
+        return []
+
 
 class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -342,34 +403,57 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
         });
 
         // === 上傳功能 ===
-        function setupUpload() {}
-
         function handleFiles(input) {
             if (!input.files || input.files.length === 0) return;
             var grid = document.getElementById('previewGrid');
-            var count = 0;
 
             for (var i = 0; i < input.files.length; i++) {
-                var file = input.files[i];
-                var url = URL.createObjectURL(file);
-                var div = document.createElement('div');
-                div.className = 'preview-item';
-                div.innerHTML =
-                    '<img src="' + url + '" alt="screenshot">' +
-                    '<button class="delete-btn" onclick="this.parentElement.remove();updateCount();">X</button>' +
-                    '<div class="info"><div>' + file.name + '</div></div>';
-                grid.appendChild(div);
-                count++;
+                (function(file) {
+                    var url = URL.createObjectURL(file);
+                    var div = document.createElement('div');
+                    div.className = 'preview-item';
+                    div.innerHTML =
+                        '<img src="' + url + '" alt="screenshot">' +
+                        '<div class="info" style="background:#fff3cd;color:#856404;"><div>AI 辨識中...</div></div>';
+                    grid.appendChild(div);
+
+                    // 送到伺服器做 AI 辨識
+                    var formData = new FormData();
+                    formData.append('file', file);
+                    fetch('/api/upload', { method: 'POST', body: formData })
+                        .then(function(r) { return r.json(); })
+                        .then(function(result) {
+                            var info = div.querySelector('.info');
+                            if (result.success && result.message) {
+                                info.style.background = '#d4edda';
+                                info.style.color = '#155724';
+                                info.innerHTML = '<div>' + result.message + '</div>';
+                                if (result.added && result.added.length > 0) {
+                                    info.innerHTML += '<div style="font-size:0.8rem;margin-top:4px;">新增：' + result.added.join('、') + '</div>';
+                                }
+                                if (result.skipped && result.skipped.length > 0) {
+                                    info.innerHTML += '<div style="font-size:0.8rem;color:#856404;">重複跳過：' + result.skipped.join('、') + '</div>';
+                                }
+                                loadStats();
+                                loadOrders();
+                            } else {
+                                info.style.background = '#f8d7da';
+                                info.style.color = '#721c24';
+                                info.innerHTML = '<div>辨識失敗</div>';
+                            }
+                        })
+                        .catch(function() {
+                            var info = div.querySelector('.info');
+                            info.style.background = '#f8d7da';
+                            info.style.color = '#721c24';
+                            info.innerHTML = '<div>上傳失敗</div>';
+                        });
+                })(input.files[i]);
             }
 
             document.getElementById('uploadCount').textContent =
-                document.getElementById('previewGrid').children.length;
+                parseInt(document.getElementById('uploadCount').textContent || '0') + input.files.length;
             input.value = '';
-        }
-
-        function updateCount() {
-            document.getElementById('uploadCount').textContent =
-                document.getElementById('previewGrid').children.length;
         }
 
         // === 訂單功能 ===
@@ -526,11 +610,11 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
             boundary_bytes = boundary.encode()
             parts = body.split(b'--' + boundary_bytes)
 
+            file_data = None
+            media_type = 'image/jpeg'
             for part in parts:
                 if b'filename="' not in part:
                     continue
-
-                # 取得檔名
                 header_end = part.find(b'\r\n\r\n')
                 if header_end == -1:
                     continue
@@ -538,33 +622,59 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                 file_data = part[header_end + 4:]
                 if file_data.endswith(b'\r\n'):
                     file_data = file_data[:-2]
-
-                # 取得原始檔名
+                # 偵測圖片類型
                 import re
                 fname_match = re.search(r'filename="([^"]+)"', header)
-                if not fname_match:
-                    continue
-                original_name = fname_match.group(1)
+                if fname_match:
+                    ext = os.path.splitext(fname_match.group(1))[1].lower()
+                    if ext == '.png':
+                        media_type = 'image/png'
+                    elif ext in ('.webp',):
+                        media_type = 'image/webp'
+                break
 
-                # 取得副檔名
-                ext = os.path.splitext(original_name)[1].lower()
-                if ext not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
-                    ext = '.jpg'
+            if not file_data:
+                self.send_error_response('No file found')
+                return
 
-                # 產生唯一檔名
-                filename = datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + str(uuid.uuid4())[:8] + ext
-                filepath = os.path.join(UPLOAD_DIR, filename)
+            # 用 Claude Vision 辨識截圖內容
+            orders_found = recognize_orders(file_data, media_type)
 
-                with open(filepath, 'wb') as f:
-                    f.write(file_data)
-
+            if not orders_found:
                 response = json.dumps({
-                    'success': True,
-                    'filename': filename,
-                    'size': len(file_data)
+                    'success': True, 'orders': [],
+                    'message': '未偵測到訂單資料，請確認是 UberEats 訂單截圖'
                 }, ensure_ascii=False)
                 self.send_json_response(response)
                 return
+
+            # 寫入資料庫（自動去重）
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            added = []
+            skipped = []
+            for o in orders_found:
+                cursor.execute('SELECT id FROM orders WHERE restaurant_name=? AND order_date=? AND amount=?',
+                               (o['restaurant_name'], o['order_date'], int(o['amount'])))
+                if cursor.fetchone():
+                    skipped.append(o['restaurant_name'])
+                else:
+                    cursor.execute('INSERT INTO orders (restaurant_name, order_date, amount, items) VALUES (?, ?, ?, ?)',
+                                   (o['restaurant_name'], o['order_date'], int(o['amount']), o.get('items', '')))
+                    added.append(o['restaurant_name'])
+            conn.commit()
+            conn.close()
+
+            response = json.dumps({
+                'success': True,
+                'orders': orders_found,
+                'added': added,
+                'skipped': skipped,
+                'message': '辨識到 {} 筆訂單，新增 {} 筆，跳過 {} 筆重複'.format(
+                    len(orders_found), len(added), len(skipped))
+            }, ensure_ascii=False)
+            self.send_json_response(response)
+            return
 
             self.send_error_response('No file found in request')
 
