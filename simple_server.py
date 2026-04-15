@@ -10,6 +10,7 @@ import uuid
 import base64
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime
 import webbrowser
 import threading
@@ -73,16 +74,26 @@ def recognize_orders(image_data, media_type='image/jpeg'):
 
 
 class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
+    def get_query_param(self, key):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        values = params.get(key, [])
+        return values[0] if values else ''
+
+    def get_path(self):
+        return urllib.parse.urlparse(self.path).path
+
     def do_GET(self):
-        if self.path == '/':
+        path = self.get_path()
+        if path == '/':
             self.serve_main_page()
-        elif self.path == '/api/orders':
+        elif path == '/api/orders':
             self.serve_orders()
-        elif self.path == '/api/stats':
+        elif path == '/api/stats':
             self.serve_stats()
-        elif self.path == '/api/uploads':
+        elif path == '/api/uploads':
             self.serve_uploads()
-        elif self.path.startswith('/uploads/'):
+        elif path.startswith('/uploads/'):
             self.serve_uploaded_file()
         else:
             self.send_error(404)
@@ -212,10 +223,27 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
 </head>
 <body>
     <div class="container">
-        <div class="main-container">
+        <!-- 登入畫面 -->
+        <div class="main-container text-center" id="loginScreen" style="max-width:500px;margin:80px auto;">
+            <h1 style="font-size:2rem;margin-bottom:10px;">UberEats 消費分析系統</h1>
+            <p class="text-muted mb-4">輸入你的名稱開始使用，每個人的資料獨立分開</p>
+            <div class="input-group mb-3">
+                <input type="text" class="form-control form-control-lg" id="loginName" placeholder="輸入你的名稱（例：小明）"
+                       style="border-radius:15px 0 0 15px;">
+                <button class="btn btn-primary btn-lg" onclick="doLogin()" style="border-radius:0 15px 15px 0;">進入</button>
+            </div>
+            <p class="text-muted" style="font-size:0.85rem;">或直接用專屬連結：?user=你的名稱</p>
+        </div>
+
+        <!-- 主畫面 -->
+        <div class="main-container" id="mainScreen" style="display:none;">
             <div class="text-center mb-5">
                 <h1 class="display-4">UberEats 消費分析系統</h1>
-                <p class="lead text-muted">追蹤您的美食消費，分析用餐習慣</p>
+                <p class="lead text-muted">
+                    <span id="userBadge" class="badge bg-primary" style="font-size:1rem;"></span>
+                    的美食消費紀錄
+                    <a href="#" onclick="switchUser()" style="font-size:0.85rem;margin-left:10px;">切換使用者</a>
+                </p>
             </div>
 
             <!-- 統計卡片 -->
@@ -397,16 +425,60 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                 </div>
             </div>
             </div>
-        </div>
+        </div> <!-- end mainScreen -->
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('orderDate').value = new Date().toISOString().split('T')[0];
+        var currentUser = '';
+
+        function doLogin() {
+            var name = document.getElementById('loginName').value.trim();
+            if (!name) { alert('請輸入名稱'); return; }
+            currentUser = name;
+            localStorage.setItem('ubereats_user', name);
+            // 更新 URL 但不重新載入
+            history.replaceState(null, '', '?user=' + encodeURIComponent(name));
+            showMainScreen();
+        }
+
+        function switchUser() {
+            localStorage.removeItem('ubereats_user');
+            currentUser = '';
+            document.getElementById('mainScreen').style.display = 'none';
+            document.getElementById('loginScreen').style.display = 'block';
+            document.getElementById('loginName').value = '';
+        }
+
+        function showMainScreen() {
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('mainScreen').style.display = 'block';
+            document.getElementById('userBadge').textContent = currentUser;
             loadStats();
             loadOrders();
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('orderDate').value = new Date().toISOString().split('T')[0];
             document.getElementById('orderForm').addEventListener('submit', handleSubmit);
+            document.getElementById('loginName').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') doLogin();
+            });
+            // 優先從 URL 讀取 user，其次 localStorage
+            var params = new URLSearchParams(window.location.search);
+            var urlUser = params.get('user');
+            if (urlUser) {
+                currentUser = urlUser;
+                localStorage.setItem('ubereats_user', urlUser);
+                showMainScreen();
+            } else {
+                var saved = localStorage.getItem('ubereats_user');
+                if (saved) {
+                    currentUser = saved;
+                    history.replaceState(null, '', '?user=' + encodeURIComponent(saved));
+                    showMainScreen();
+                }
+            }
         });
 
         // === 上傳功能 ===
@@ -427,7 +499,7 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                     // 送到伺服器做 AI 辨識
                     var formData = new FormData();
                     formData.append('file', file);
-                    fetch('/api/upload', { method: 'POST', body: formData })
+                    fetch('/api/upload?user=' + encodeURIComponent(currentUser), { method: 'POST', body: formData })
                         .then(function(r) { return r.json(); })
                         .then(function(result) {
                             var info = div.querySelector('.info');
@@ -467,6 +539,7 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
         async function handleSubmit(e) {
             e.preventDefault();
             var formData = {
+                user_id: currentUser,
                 restaurant_name: document.getElementById('restaurantName').value,
                 order_date: document.getElementById('orderDate').value,
                 amount: parseInt(document.getElementById('amount').value),
@@ -499,7 +572,7 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
 
         async function loadStats() {
             try {
-                var response = await fetch('/api/stats');
+                var response = await fetch('/api/stats?user=' + encodeURIComponent(currentUser));
                 var stats = await response.json();
                 document.getElementById('totalOrders').textContent = stats.total_orders;
                 document.getElementById('totalAmount').textContent = '$' + Math.round(stats.total_amount);
@@ -537,7 +610,7 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
 
         async function loadOrders() {
             try {
-                var response = await fetch('/api/orders');
+                var response = await fetch('/api/orders?user=' + encodeURIComponent(currentUser));
                 allOrders = await response.json();
                 var tableBody = document.getElementById('ordersTable');
                 tableBody.innerHTML = '';
@@ -644,6 +717,10 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
 
     def handle_upload(self):
         try:
+            user_id = self.get_query_param('user')
+            if not user_id:
+                self.send_error_response('缺少使用者識別')
+                return
             content_type = self.headers.get('Content-Type', '')
             if 'multipart/form-data' not in content_type:
                 self.send_error_response('Invalid content type')
@@ -706,13 +783,13 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
             added = []
             skipped = []
             for o in orders_found:
-                cursor.execute('SELECT id FROM orders WHERE restaurant_name=? AND order_date=? AND amount=?',
-                               (o['restaurant_name'], o['order_date'], int(o['amount'])))
+                cursor.execute('SELECT id FROM orders WHERE user_id=? AND restaurant_name=? AND order_date=? AND amount=?',
+                               (user_id, o['restaurant_name'], o['order_date'], int(o['amount'])))
                 if cursor.fetchone():
                     skipped.append(o['restaurant_name'])
                 else:
-                    cursor.execute('INSERT INTO orders (restaurant_name, order_date, amount, items) VALUES (?, ?, ?, ?)',
-                                   (o['restaurant_name'], o['order_date'], int(o['amount']), o.get('items', '')))
+                    cursor.execute('INSERT INTO orders (user_id, restaurant_name, order_date, amount, items) VALUES (?, ?, ?, ?, ?)',
+                                   (user_id, o['restaurant_name'], o['order_date'], int(o['amount']), o.get('items', '')))
                     added.append(o['restaurant_name'])
             conn.commit()
             conn.close()
@@ -799,9 +876,13 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
 
     def serve_orders(self):
         try:
+            user_id = self.get_query_param('user')
+            if not user_id:
+                self.send_json_response('[]')
+                return
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
-            cursor.execute('SELECT id, restaurant_name, order_date, amount, items FROM orders ORDER BY order_date DESC')
+            cursor.execute('SELECT id, restaurant_name, order_date, amount, items FROM orders WHERE user_id=? ORDER BY order_date DESC', (user_id,))
             orders = cursor.fetchall()
             conn.close()
             orders_list = [{'id': o[0], 'restaurant_name': o[1], 'order_date': o[2], 'amount': o[3], 'items': o[4]} for o in orders]
@@ -812,11 +893,15 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
 
     def serve_stats(self):
         try:
+            user_id = self.get_query_param('user')
+            if not user_id:
+                self.send_json_response(json.dumps({'total_orders': 0, 'total_amount': 0, 'avg_amount': 0, 'monthly': []}))
+                return
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
-            cursor.execute('SELECT COUNT(*), SUM(amount), AVG(amount) FROM orders')
+            cursor.execute('SELECT COUNT(*), SUM(amount), AVG(amount) FROM orders WHERE user_id=?', (user_id,))
             total_orders, total_amount, avg_amount = cursor.fetchone()
-            cursor.execute("SELECT strftime('%Y-%m', order_date) as month, COUNT(*), SUM(amount), AVG(amount) FROM orders GROUP BY month ORDER BY month DESC")
+            cursor.execute("SELECT strftime('%Y-%m', order_date) as month, COUNT(*), SUM(amount), AVG(amount) FROM orders WHERE user_id=? GROUP BY month ORDER BY month DESC", (user_id,))
             monthly = []
             for row in cursor.fetchall():
                 monthly.append({
@@ -842,11 +927,15 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length).decode('utf-8')
             data = json.loads(post_data)
+            user_id = data.get('user_id', '')
+            if not user_id:
+                self.send_error_response('缺少使用者識別')
+                return
             conn = sqlite3.connect(DB_FILE)
             cursor = conn.cursor()
-            # 重複檢查：同餐廳 + 同日期 + 同金額 視為重複
-            cursor.execute('SELECT id FROM orders WHERE restaurant_name=? AND order_date=? AND amount=?',
-                           (data['restaurant_name'], data['order_date'], int(data['amount'])))
+            # 重複檢查：同使用者 + 同餐廳 + 同日期 + 同金額 視為重複
+            cursor.execute('SELECT id FROM orders WHERE user_id=? AND restaurant_name=? AND order_date=? AND amount=?',
+                           (user_id, data['restaurant_name'], data['order_date'], int(data['amount'])))
             existing = cursor.fetchone()
             if existing:
                 conn.close()
@@ -854,8 +943,8 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                     'error': '此訂單已存在（同餐廳、同日期、同金額）'}, ensure_ascii=False)
                 self.send_json_response(response)
                 return
-            cursor.execute('INSERT INTO orders (restaurant_name, order_date, amount, items) VALUES (?, ?, ?, ?)',
-                           (data['restaurant_name'], data['order_date'], int(data['amount']), data['items']))
+            cursor.execute('INSERT INTO orders (user_id, restaurant_name, order_date, amount, items) VALUES (?, ?, ?, ?, ?)',
+                           (user_id, data['restaurant_name'], data['order_date'], int(data['amount']), data['items']))
             conn.commit()
             order_id = cursor.lastrowid
             conn.close()
@@ -920,6 +1009,7 @@ def init_database():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT '',
             restaurant_name TEXT NOT NULL,
             order_date DATE NOT NULL,
             amount INTEGER NOT NULL,
@@ -927,23 +1017,12 @@ def init_database():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    orders = [
-        ('臭名昭彰祖傳酥炸臭豆腐', '2026-04-06', 130, '臭豆腐'),
-        ('串本町串燒（原火奴總店）', '2026-03-22', 417, '8份餐點'),
-        ('阿俊龍飽', '2026-03-14', 130, '蝦仁炒飯'),
-        ('肉蛋吐司創始店 肉蛋中西式早餐店', '2026-03-14', 170, '招牌肉蛋土司、招牌冰奶茶'),
-        ('范姜雞肉飯 后里甲后店', '2026-03-09', 166, 'Braised Chicken Rice、Pork Meatballs Soup、Braised Tofu'),
-        ('鍋裡GOiN風味湯鍋 台中后里店', '2026-02-26', 226, '火鍋美食鍋'),
-        ('一頂燒堡臭豆腐 后里店', '2026-02-11', 140, '酥炸臭豆腐'),
-    ]
-    added = 0
-    for o in orders:
-        cursor.execute('SELECT id FROM orders WHERE restaurant_name=? AND order_date=? AND amount=?', (o[0], o[1], o[2]))
-        if not cursor.fetchone():
-            cursor.execute('INSERT INTO orders (restaurant_name, order_date, amount, items) VALUES (?, ?, ?, ?)', o)
-            added += 1
-    if added > 0:
-        print('已載入 {} 筆 UberEats 訂單（跳過重複）'.format(added))
+    # 遷移：如果舊表沒有 user_id 欄位，加上去
+    cursor.execute("PRAGMA table_info(orders)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'user_id' not in columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+        print('已遷移資料庫：新增 user_id 欄位')
     conn.commit()
     conn.close()
 
