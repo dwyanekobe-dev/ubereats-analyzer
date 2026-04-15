@@ -212,13 +212,14 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
                             <h3 class="mb-0">上傳 UberEats 訂單截圖</h3>
                         </div>
                         <div class="card-body">
-                            <label for="fileInput" class="upload-zone" id="uploadZone" style="display:block;">
-                                <h4>點擊上傳截圖</h4>
+                            <div class="upload-zone" id="uploadZone">
+                                <h4>點擊下方按鈕上傳截圖</h4>
                                 <p>支援 JPG、PNG 格式，可一次上傳多張</p>
                                 <p style="margin-top: 10px; color: #667eea;">從手機 Uber Eats App 的訂單頁面截圖即可</p>
-                                <input type="file" id="fileInput" accept="image/*" multiple style="opacity:0;width:0;height:0;overflow:hidden;position:absolute;">
-                            </label>
-                            <label for="fileInput" class="btn btn-primary btn-lg w-100 mt-3" style="border-radius:15px;">選擇相片上傳</label>
+                            </div>
+                            <input type="file" id="fileInput" accept="image/*" multiple
+                                   style="display:block;width:100%;padding:15px;margin-top:15px;font-size:18px;border:2px solid #667eea;border-radius:15px;background:#f8f9ff;"
+                                   onchange="handleFiles(this)">
 
                             <div class="upload-progress" id="uploadProgress">
                                 <div class="progress">
@@ -337,140 +338,38 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
             document.getElementById('orderDate').value = new Date().toISOString().split('T')[0];
             loadStats();
             loadOrders();
-            loadUploads();
             document.getElementById('orderForm').addEventListener('submit', handleSubmit);
-            setupUpload();
         });
 
         // === 上傳功能 ===
-        function setupUpload() {
-            var zone = document.getElementById('uploadZone');
-            var input = document.getElementById('fileInput');
+        function setupUpload() {}
 
-            input.addEventListener('change', function() {
-                if (input.files.length > 0) uploadFiles(input.files);
-            });
-
-            zone.addEventListener('dragover', function(e) {
-                e.preventDefault();
-                zone.classList.add('dragover');
-            });
-            zone.addEventListener('dragleave', function() {
-                zone.classList.remove('dragover');
-            });
-            zone.addEventListener('drop', function(e) {
-                e.preventDefault();
-                zone.classList.remove('dragover');
-                if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
-            });
-        }
-
-        var localUploads = [];
-
-        async function uploadFiles(files) {
-            var progress = document.getElementById('uploadProgress');
-            var bar = document.getElementById('progressBar');
-            var text = document.getElementById('progressText');
-            progress.style.display = 'block';
-
-            var total = files.length;
-            var done = 0;
-
-            for (var i = 0; i < files.length; i++) {
-                var file = files[i];
-                text.textContent = '處理中 (' + (i+1) + '/' + total + '): ' + file.name;
-                bar.style.width = ((i / total) * 100) + '%';
-
-                // 用 FileReader 在瀏覽器端讀取圖片
-                var dataUrl = await new Promise(function(resolve) {
-                    var reader = new FileReader();
-                    reader.onload = function(e) { resolve(e.target.result); };
-                    reader.readAsDataURL(file);
-                });
-
-                localUploads.push({
-                    name: file.name,
-                    size: file.size > 1024*1024 ? (file.size/1024/1024).toFixed(1)+' MB' : Math.round(file.size/1024)+' KB',
-                    dataUrl: dataUrl
-                });
-
-                // 也嘗試上傳到伺服器（如果失敗也沒關係）
-                try {
-                    var formData = new FormData();
-                    formData.append('file', file);
-                    await fetch('/api/upload', { method: 'POST', body: formData });
-                } catch (err) {}
-
-                done++;
-            }
-
-            bar.style.width = '100%';
-            text.textContent = '完成！已處理 ' + done + ' 張截圖';
-            setTimeout(function() { progress.style.display = 'none'; }, 2000);
-
-            document.getElementById('fileInput').value = '';
-            renderUploads();
-        }
-
-        function renderUploads() {
+        function handleFiles(input) {
+            if (!input.files || input.files.length === 0) return;
             var grid = document.getElementById('previewGrid');
-            grid.innerHTML = '';
-            document.getElementById('uploadCount').textContent = localUploads.length;
+            var count = 0;
 
-            localUploads.forEach(function(file, idx) {
+            for (var i = 0; i < input.files.length; i++) {
+                var file = input.files[i];
+                var url = URL.createObjectURL(file);
                 var div = document.createElement('div');
                 div.className = 'preview-item';
-                var img = document.createElement('img');
-                img.src = file.dataUrl;
-                img.alt = 'screenshot';
-                div.appendChild(img);
-                var btn = document.createElement('button');
-                btn.className = 'delete-btn';
-                btn.textContent = 'X';
-                btn.onclick = function() { localUploads.splice(idx, 1); renderUploads(); };
-                div.appendChild(btn);
-                var info = document.createElement('div');
-                info.className = 'info';
-                info.innerHTML = '<div>' + file.name + '</div><div style="color:#999">' + file.size + '</div>';
-                div.appendChild(info);
+                div.innerHTML =
+                    '<img src="' + url + '" alt="screenshot">' +
+                    '<button class="delete-btn" onclick="this.parentElement.remove();updateCount();">X</button>' +
+                    '<div class="info"><div>' + file.name + '</div></div>';
                 grid.appendChild(div);
-            });
-        }
-
-        async function loadUploads() {
-            // 顯示本地預覽
-            renderUploads();
-            // 也嘗試載入伺服器端的（如果有的話）
-            try {
-                var response = await fetch('/api/uploads');
-                var uploads = await response.json();
-                if (uploads.length > 0 && localUploads.length === 0) {
-                    document.getElementById('uploadCount').textContent = uploads.length;
-                    var grid = document.getElementById('previewGrid');
-                    uploads.forEach(function(file) {
-                        var div = document.createElement('div');
-                        div.className = 'preview-item';
-                        div.innerHTML =
-                            '<img src="/uploads/' + file.name + '" alt="screenshot">' +
-                            '<div class="info"><div>' + file.name + '</div><div style="color:#999">' + file.size + '</div></div>';
-                        grid.appendChild(div);
-                    });
-                }
-            } catch (err) {}
-        }
-
-        async function deleteUpload(filename) {
-            if (!confirm('確定要刪除這張截圖嗎？')) return;
-            try {
-                await fetch('/api/delete-upload', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename: filename })
-                });
-                loadUploads();
-            } catch (err) {
-                console.error('Delete failed:', err);
+                count++;
             }
+
+            document.getElementById('uploadCount').textContent =
+                document.getElementById('previewGrid').children.length;
+            input.value = '';
+        }
+
+        function updateCount() {
+            document.getElementById('uploadCount').textContent =
+                document.getElementById('previewGrid').children.length;
         }
 
         // === 訂單功能 ===
