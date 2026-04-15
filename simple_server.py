@@ -18,35 +18,44 @@ import time
 PORT = int(os.environ.get('PORT', 8000))
 DB_FILE = 'ubereats_orders.db'
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def recognize_orders(image_data, media_type='image/jpeg'):
-    """用 Gemini Vision API 辨識 UberEats 截圖中的訂單，回傳 (orders, error_msg)"""
-    if not GEMINI_API_KEY:
-        return [], 'GEMINI_API_KEY 未設定'
+    """用 Claude Vision API 辨識 UberEats 截圖中的訂單，回傳 (orders, error_msg)"""
+    if not ANTHROPIC_API_KEY:
+        return [], 'ANTHROPIC_API_KEY 未設定'
 
     img_b64 = base64.b64encode(image_data).decode('utf-8')
     print('圖片大小: {} bytes'.format(len(image_data)), flush=True)
 
+    prompt = '這是 UberEats 訂單截圖，請辨識所有訂單，回傳 JSON 陣列。每筆訂單格式：{"restaurant_name":"店名","order_date":"YYYY-MM-DD","amount":金額數字,"items":"餐點描述"}。只回傳 JSON 陣列，不要其他文字。如果看不到訂單就回傳 []。日期如果只顯示月日，年份請用 2026。金額只取數字（不含$符號）。'
+
     request_body = json.dumps({
-        "contents": [{
-            "parts": [
-                {"inline_data": {"mime_type": media_type, "data": img_b64}},
-                {"text": '這是 UberEats 訂單截圖，請辨識所有訂單，回傳 JSON 陣列。每筆訂單格式：{"restaurant_name":"店名","order_date":"YYYY-MM-DD","amount":金額數字,"items":"餐點描述"}。只回傳 JSON 陣列，不要其他文字。如果看不到訂單就回傳 []。日期如果只顯示月日，年份請用 2026。金額只取數字（不含$符號）。'}
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 4096,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": img_b64}},
+                {"type": "text", "text": prompt}
             ]
         }]
     }).encode('utf-8')
 
-    url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={}'.format(GEMINI_API_KEY)
-    req = urllib.request.Request(url, data=request_body, headers={'Content-Type': 'application/json'})
+    url = 'https://api.anthropic.com/v1/messages'
+    req = urllib.request.Request(url, data=request_body, headers={
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+    })
 
     try:
-        print('呼叫 Gemini Vision API...', flush=True)
+        print('呼叫 Claude Vision API...', flush=True)
         with urllib.request.urlopen(req, timeout=60) as resp:
             result = json.loads(resp.read().decode('utf-8'))
-            text = result['candidates'][0]['content']['parts'][0]['text'].strip()
-            print('Gemini 回應: {}'.format(text[:200]), flush=True)
+            text = result['content'][0]['text'].strip()
+            print('Claude 回應: {}'.format(text[:200]), flush=True)
             start = text.find('[')
             end = text.rfind(']') + 1
             if start >= 0 and end > start:
