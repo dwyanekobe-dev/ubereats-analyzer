@@ -99,15 +99,16 @@ class UberEatsHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
-        if self.path == '/api/orders':
+        path = self.get_path()
+        if path == '/api/orders':
             self.add_order()
-        elif self.path == '/api/orders/update':
+        elif path == '/api/orders/update':
             self.update_order()
-        elif self.path == '/api/orders/delete':
+        elif path == '/api/orders/delete':
             self.delete_order()
-        elif self.path == '/api/upload':
+        elif path == '/api/upload':
             self.handle_upload()
-        elif self.path == '/api/delete-upload':
+        elif path == '/api/delete-upload':
             self.delete_upload()
         else:
             self.send_error(404)
